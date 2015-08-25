@@ -1,0 +1,127 @@
+---
+title: "What type of exercise?. Machine Learning Predictions"
+author: "Carlos Ortega"
+date: "August 25th, 2015"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    theme: spacelab
+  pdf_document:
+    number_sections: yes
+    toc: yes
+---
+
+***
+
+# Synopsis
+1. Six different persons performed five type of exercices.
+2. They monitored their activity with a wearable device.
+3. All data collected is available in a file **pml_training.csv**
+  + Within this file, each row represents a type of exercise performed in a particular date.
+  + Each row consists of many different columns with the data collected with the wearable device.
+4. Based on this file, the goal is create a model capable of predicting with type of exercise was performed for each of the 20 cases (rows) included in file **pml_testing.csv**.
+  
+# Model building strategy
+## Data munging
+When building a machine learning model the first activity, the most time consuming one, is to clean, prepare the data before applying a statistical model.
+
+In the file provided, data is quite well organized. The main obstacle comes from how to deal with so many different variables. The typical questions we should aks ourselves are:
+
+* Are all of them valid, in the sense that they do not include too many missing values?
+* Even if the variables have adequate values, are they meaningful for the purpose of the analysis?.
+* Or even if they have values, are all of them equal?
+* And in terms of simplification (to build a parsimonious model), can we ignore some of the variables because they are correlated with some others? Are they superfluos?
+
+In the assignment I have considered all these issues:
+
+* The original data is data.frame of __19622 rows__ and __160__ columns.
+* By using __caret__ functions __nearZeroVar()__ and __findCorrelation()__ and ad-hoc developed function to count the number of NAs by column, the number of variables were reduced up to __45_-.
+  + two additional columns with date/hour information were also ignored as well as the one with the name of the persons who performed the exercises.
+* So finally the dataset was reduced to __42__ columns, all of them numeric, except the one with the type of exercise (__classe__), the predictor.
+
+This process was laborious and very time consuming compared with model building, but it is key to avoid problems when applying the different model algorithms.
+
+## Model selection
+With function __createDataPartition()__ I divided the dataset in two groups __training__ (with the 70% of the cases) and __testing__ (with the remaining 30%).
+
+Although the prediction was performed based on a particular model, I explored several different machine learning techniques. The selection of these different techniques were based on different criteris: easiness of use and interpretation, well-known good performance with classification problems and also, their execution time:
+1. Regression and Classification Trees, based on __rpart__ library.
+2. Partial Least Squares, based on __pls__ library.
+3. Functional Discriminant Analysis, based on __fda__ library.
+3. A more improved kind of trees partitioning classification technique based on __C5.0__ library.
+4. And a more recent and improved version of the Generalized Boosting Modeling (__gbm__) algorithm, Extreme Generalized Boosting Modeling (_xgboost_ library).
+
+Note: The last two techniques are __bagged__ algorithms.
+
+To avoid __out of sample error__ I applied a __cross validated__ (__K=10__ and 5 times) for each model, which is specified in the __trainControl__ parameters.
+
+The metric used to evaluate the performance of each model is the __Accuracy__, that is stored in the __confusionMatrix()__ object that is called once the model has been evaluated with the __training__ data.
+
+With the function, __resamples()__ (also in __caret__ library) is possible to get a plot with a comparison of the different values of __Accuracy__ (95% CI) for all the models evaluated. Each of the models need to be stored in the workspace.
+
+This is the plot for the five models evaluated:
+
+```{r, echo=FALSE, eval=TRUE,fig.width=7, fig.height=5, message=FALSE, fig.align='center'}
+library(caret)
+load("xgb_fda_pls_C50_rpart.RData")
+cvValues <- resamples(
+  list(
+        CART = modFitrpart, 
+        C5.0 = modFitC50,
+        FDA = modFitfda,
+        PLS = modFitpls,
+        XGB = modFitxgb
+  )
+)
+dotplot(cvValues, metric = "Accuracy")
+
+```
+
+As it can be seen in the graph, models based on __C5.0__ and __xgb__ got an Accuracy of __99%__ which is quite impresive, compared with the results that _rpart_, _pls_ and _fda_ achieved.
+
+These models took around two hours of execution (on a MacBook Pro 4 with 8Gb of RAM and 4 cores). In terms of execution, the parallel capabilities that _caret_ supports were used.
+
+#Results 
+Regarding the winner model, this is the __R__ code used:
+
+``````{r, echo=TRUE, eval=FALSE}
+set.seed(1)
+cvCtrl <- trainControl(method = "repeatedcv", repeats = 5,
+                       classProbs = TRUE,
+                       verboseIter = TRUE)
+
+#Model
+modFitxgb <- train(
+  classe ~ ., data = trainDat,
+  method = "xgbTree",
+  preProc = c("center", "scale"),
+  tuneLength = 10,
+  metric = "Accuracy",
+  trControl = cvCtrl
+)
+
+```
+
+
+With this model, the __confusionMatrix()__ and the __varImp()__ (variable importance) are executed in this way, getting the following results: 
+
+```{r, echo=TRUE, eval=TRUE,fig.width=7, fig.height=5, message=FALSE, fig.align='center'}
+#Prediction
+predxgb <- predict(modFitxgb, testDat)
+#ConfusionMatrix
+conMat <- confusionMatrix(predxgb, testDat$classe)
+conMat
+#Variable Importance
+Impxgb <- varImp( modFitxgb, scale=F)
+plot(Impxgb, top=20)
+```
+
+With this model, the 20 testing cases of file **pml_testing.csv** are presented and a prediction is achieved. Before including the case in the __predict()__ function, I removed the same columns that were removed in the training file.
+
+#Conclusions
+* Original dataset is cleaned and many variables are removed.
+* With a reduced and clean dataset several predictive models are evaluated.
+* One of the models gets the highest level of __Accuracy__: __99%__.
+* The model used __Xgboost__ algorithm (a faster variant of __gbm__).
+* With this model the 20 testing cases are evaluated to get a prediction for the type of exercise.
